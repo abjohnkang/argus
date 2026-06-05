@@ -1,0 +1,8 @@
+{
+  "detected": false,
+  "matched_keywords": ["sqlite"],
+  "source_files": [".moai/project/tech.md"],
+  "scanned_at": "2026-06-04T20:50:00Z",
+  "tech_md_hash": "1b0a5a2d1b17e79bcf462ba5fbc5df9aae6cc0ffb6bb1504e533c188d65f5a07",
+  "notes": "Single 'SQLite' mention in tech.md is documentation-only under the deferred persistence decision. No ORM/ODM keywords and no dependency manifests detected (no package.json, requirements.txt, pyproject.toml, etc.). detected=false per Phase 4.1a rules: ORM/ODM matches are stronger signals than DB engine name mentions, and no ORM was found."
+}
