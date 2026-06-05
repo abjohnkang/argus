@@ -24,8 +24,9 @@ htmlcov/
 api/tests/
 tests/
 
-# Entry scripts run on the host, not inside the container
+# Entry scripts and sourced helpers run on the host, not inside the container
 run_*.sh
+_docker_preflight.sh
 
 # Local secrets / logs
 .env

@@ -21,12 +21,12 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
-# Pre-flight: Docker daemon reachable.
-if ! docker info >/dev/null 2>&1; then
-  echo "ERROR: Docker daemon not running or 'docker' CLI not available." >&2
-  echo "Start Docker Desktop (macOS/Windows) or 'sudo systemctl start docker' (Linux), then retry." >&2
-  exit 1
-fi
+# Pre-flight: Docker daemon reachable (auto-start if installed; instruct if absent).
+# Logic lives in _docker_preflight.sh (sourced) so run_server.sh and run_debug.sh
+# share the same policy. See CHANGELOG.md for design rationale.
+# shellcheck source=_docker_preflight.sh
+source "$PROJECT_ROOT/_docker_preflight.sh"
+ensure_docker_ready
 
 API_PORT="${API_PORT:-8000}"
 HEALTH_URL="http://127.0.0.1:${API_PORT}/health"

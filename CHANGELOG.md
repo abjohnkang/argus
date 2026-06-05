@@ -35,6 +35,12 @@ All notable changes to Argus are documented here. Format follows [Keep a Changel
 - `run_server.sh`:
   - Stale-container detection added: probes `docker compose ps --status running` + `curl /health`. If containers exist but `/health` is unreachable within 3 s, runs `docker compose down --remove-orphans` (named volume preserved, no model re-pull) to recover before the existing `docker compose up -d`. If `/health` already responds 200, the existing idempotent fast-path is unchanged (Scenario 5 preserved).
 - `.env.example` documents two new variables: `UI_PORT` (default `3000`, used by `run_debug.sh` browser-launch target) and `NO_BROWSER` (default `0`, set to `1` to skip the launch).
+- `_docker_preflight.sh` (new file at project root) — sourced by both `run_server.sh` and `run_debug.sh`. Replaces the existing 4-line `if ! docker info` check with `ensure_docker_ready`, which:
+  - **Auto-starts** Docker if installed but daemon is unreachable. macOS: launches Docker Desktop (`/Applications/Docker.app`), falls back to Colima (`colima start`), then OrbStack (`/Applications/OrbStack.app`). Linux-systemd: `sudo systemctl start docker`. WSL: cannot auto-start (daemon is on Windows host) — prints clear pointer.
+  - **Does NOT auto-install** Docker. If missing, prints platform-specific install command and exits 1. Auto-install requires sudo / admin credentials / multi-GB kernel-extension downloads — silently invasive for a privacy-individual project. User stays in control of installation.
+  - Polls `docker info` for up to 60s after start attempt (configurable via `ARGUS_DOCKER_WAIT` env var).
+  - Install instructions cover Debian/Ubuntu (`apt-get`), Fedora/RHEL (`dnf`), Arch (`pacman`), macOS (Docker Desktop / Colima / OrbStack), and WSL (Docker Desktop on Windows host).
+- `.dockerignore` extended: now excludes `_docker_preflight.sh` alongside `run_*.sh` (sourced helper, not needed inside the image).
 
 ### Tooling
 
