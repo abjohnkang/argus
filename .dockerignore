@@ -1,0 +1,32 @@
+# Docker build context exclusions for the api/Dockerfile build.
+# Goal: ship only api/ source + api/requirements.txt into the image.
+
+# VCS / orchestration metadata — never needed at runtime
+.git/
+.moai/
+.claude/
+
+# Project-level docs
+*.md
+
+# Python build / cache artifacts
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Coverage artifacts (host-side tooling)
+htmlcov/
+.coverage
+
+# Tests are not shipped in the runtime image (TASK-013 contract)
+api/tests/
+tests/
+
+# Entry scripts run on the host, not inside the container
+run_*.sh
+
+# Local secrets / logs
+.env
+*.log

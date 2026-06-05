@@ -1,0 +1,45 @@
+# SPEC-INFRA-001 — two-service Argus stack.
+#
+# Topology (see .moai/specs/SPEC-INFRA-001/research.md Section 6):
+#   - `model` : Ollama runtime, internal-only (no host port mapping).
+#                Owns the named volume holding the 32-67 GB Scout weights.
+#   - `api`   : FastAPI backend, exposed to host on 127.0.0.1 only.
+#                Talks to `model` via the default compose network using
+#                the service DNS name `model`.
+#
+# REQ-INFRA-001 enforcement: api.ports uses the literal `127.0.0.1:` host
+# prefix so the kernel never accepts a non-loopback connection.
+#
+# No top-level `version:` key — modern Compose Spec omits it; including it
+# triggers a deprecation warning under Docker Compose v2+.
+
+services:
+  model:
+    image: ollama/ollama:latest
+    environment:
+      # Ollama binds its own internal port inside the model container.
+      # Not exposed to the host (no `ports:` key below).
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - argus_ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    # REQ-INFRA-001: host-side bind locked to loopback. Do NOT remove the
+    # `127.0.0.1:` prefix — that would expose the API on every interface.
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    environment:
+      OLLAMA_HOST: http://model:11434
+      MODEL: ${MODEL:-llama4:scout}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-2.0}
+    depends_on:
+      model:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  argus_ollama_models:
