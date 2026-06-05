@@ -6,8 +6,8 @@
 
 | Layer | Language |
 |-------|----------|
-| Backend | Python |
-| Frontend | TypeScript (via React) |
+| Backend | Python 3.12 |
+| Frontend | TypeScript (via React) — planned, follow-up SPEC |
 | Orchestration | Shell (entry scripts) |
 | Container config | YAML (Docker Compose) |
 
@@ -17,29 +17,97 @@
 
 ### Backend: Python + FastAPI
 
-**Rationale:** Python has the strongest ecosystem for Llama 4 integration. Key libraries (`transformers`, `llama-cpp-python`, Ollama client SDKs) are Python-first. FastAPI is the natural choice for the backend because it has first-class support for Server-Sent Events and WebSocket streaming, which are both candidates for the token-streaming transport. FastAPI also provides automatic OpenAPI schema generation, which is useful for frontend integration.
+**Rationale:** Python has the strongest ecosystem for Llama 4 integration. Key libraries (`transformers`, `llama-cpp-python`, Ollama client SDKs) are Python-first. FastAPI is the natural choice for the backend because it has first-class support for Server-Sent Events and asyncio-native streaming. FastAPI also provides automatic OpenAPI schema generation, which is useful for frontend integration.
 
 ### Frontend: React (TypeScript)
 
-**Rationale:** Locked in by the project's technology choices from the interview. React is the de facto standard for interactive chat UIs and has strong ecosystem support for streaming response rendering. TypeScript is used to keep the frontend type-safe as the project grows.
+**Rationale (planned):** Locked in by the project's technology choices from the interview. React is the de facto standard for interactive chat UIs and has strong ecosystem support for streaming response rendering. TypeScript is used to keep the frontend type-safe as the project grows. Framework choice (bare Vite vs Next.js) is deferred to the UI SPEC.
 
 ### Orchestration: Docker + Docker Compose
 
-**Rationale:** The core constraint is that the host environment must stay untouched. Docker Compose is the simplest tool that satisfies this: one `docker-compose.yml` defines all services (backend API, frontend, model runtime), and the user needs only Docker installed on their machine. All dependencies — Python packages, Node modules, model runtime binaries — live inside containers.
+**Rationale:** The core constraint is that the host environment must stay untouched. Docker Compose is the simplest tool that satisfies this: one `docker-compose.yml` defines all services, and the user needs only Docker installed. All dependencies live inside containers.
+
+---
+
+## SPEC-INFRA-001 Stack (Runtime Foundation)
+
+### Runtime Dependencies
+
+| Package | Version constraint | Role |
+|---|---|---|
+| Python | `>=3.12,<3.13` | Language runtime (pinned in pyproject.toml) |
+| FastAPI | `>=0.115,<0.200` | ASGI web framework; SSE streaming, OpenAPI auto-gen, asyncio-native |
+| uvicorn[standard] | `>=0.30,<0.40` | ASGI server (includes `websockets`, `httptools`, `uvloop`) |
+| httpx | `>=0.27,<0.30` | Async HTTP client used by `OllamaAdapter` to talk to the model runtime |
+| pydantic | `>=2.7,<3.0` | Request/response validation and serialization |
+
+### Model Runtime
+
+**Default: Ollama** (`ollama/ollama:latest` Docker image)
+
+- Provides OpenAI-compatible `/v1/chat/completions` SSE endpoint natively
+- First-class Llama 4 Scout support: `ollama run llama4:scout` is one command
+- Named Docker volume `argus_ollama_models` persists model weights across container restarts
+- Internal-only: no host port mapping; only the `api` service talks to it over the Compose network
+
+**Why Ollama over llama.cpp or vLLM** (see `research.md` Section 2):
+- Lowest operational friction for the privacy-individual audience
+- Official Docker image with stable API surface
+- Handles quantization, model pull, and resume natively
+
+**llama.cpp escape hatch:** Deferred to a follow-up SPEC. A `compose.llamacpp.yml` overlay is planned for power users who need finer quantization control or smaller memory footprints. The `OllamaAdapter` in `api/inference.py` is the single boundary that would change.
+
+**vLLM:** Rejected. Production GPU framework optimized for H100/A100 multi-GPU. Irrelevant on personal hardware (see `research.md` Section 2).
+
+### Model: Llama 4 Scout
+
+**Why Scout** (see `research.md` Section 1):
+- Only Llama 4 variant that fits non-server personal hardware at Q4 quantization (~32–67 GB)
+- Maverick (400B) needs RTX 5090-class VRAM; Behemoth is server-class — both rejected
+- MoE architecture means inference speed is closer to a dense 17B than a 109B model
+
+Default `MODEL=llama4:scout`. Override via environment variable for smaller hardware (e.g., `MODEL=llama3.2:3b`).
+
+### Container Runtime
+
+Docker + Docker Compose v2 (no `version:` key in `docker-compose.yml` per Compose Spec).
+
+**Why two-service topology** (see `research.md` Section 6):
+- Separation of concerns: API restart does not require model reload
+- Future-proof: agent tool services (file I/O sandbox, retrieval) become additional containers
+- Clear failure boundary: API crash does not take down the model runtime
+
+### Test Stack
+
+| Package | Version constraint | Role |
+|---|---|---|
+| pytest | `>=8,<9` | Test runner |
+| pytest-asyncio | `>=0.23,<1` | Async test support (`asyncio_mode = "auto"`) |
+| pytest-cov | `>=5,<7` | Coverage reporting and gate enforcement |
+| respx | `>=0.21,<1` | HTTP mock for hermetic unit tests (intercepts `httpx` calls to Ollama) |
+
+### Linting, Formatting, Coverage
+
+| Tool | Config | Notes |
+|---|---|---|
+| ruff | `line-length=100`, `target-version=py312` | Lint rules: E, F, W, I, B, UP |
+| black | `line-length=100`, `target-version=["py312"]` | Code formatter |
+| isort | `profile=black`, `line_length=100` | Import sorter |
+| pytest-cov | `fail_under=85` | Gate enforced in CI and locally; current coverage: 92.62% |
+
+Coverage source is `api/`; `api/tests/*` is excluded from measurement.
 
 ---
 
 ## Dev Environment Requirements
 
-To run Argus, the user needs:
-
-- **Docker** and **Docker Compose** — required, no exceptions. All services run in containers.
-- **Internet connection** — required on first run only, to pull Docker images and download model weights. Subsequent runs are fully offline.
+To run Argus (end user):
+- **Docker** and **Docker Compose** — required. All services run in containers.
+- **Internet connection** — required on first run only (model pull). Subsequent runs are fully offline.
 
 To develop outside containers (optional):
-
-- **Python 3.11+** — only if developing the API outside the container
-- **Node.js 20+** — only if developing the UI outside the container (e.g., for hot reload)
+- **Python 3.12** — only if developing the API outside the container
+- **Node.js 20+** — only if developing the UI outside the container (planned)
 
 No Python or Node.js installation is required to run Argus as an end user.
 
@@ -47,66 +115,29 @@ No Python or Node.js installation is required to run Argus as an end user.
 
 ## Build and Deployment
 
-Deployment model: single-machine, local Docker Compose stack. There is no cloud deployment target.
+Deployment model: single-machine, local Docker Compose stack. No cloud deployment target.
 
-**Entry scripts (planned, not yet written):**
+**Entry scripts (project root):**
+- `run_server.sh` — `docker compose up -d`, then poll `/health` until `200 {"status":"ready"}` or timeout. Idempotent: re-runs on a healthy stack are no-ops.
+- `run_debug.sh` — `docker compose up` (foreground) with `OLLAMA_DEBUG=1` and API `debug` log level. Streams logs to stdout for development and troubleshooting.
 
-- `scripts/run_server.sh` — Starts the full stack. Idempotent behavior: on first run, pulls Docker images, builds local images, and downloads model weights. On subsequent runs, all steps are no-ops if already complete. This is the standard user entry point.
-- `scripts/run_debug.sh` — Identical to `run_server.sh` but surfaces debug-level logs. Used during development and troubleshooting.
+Both scripts require only `docker` and `docker compose` in the host `PATH`.
 
-Both scripts require only `docker` and `docker compose` to be present in the host `PATH`.
-
-**No-network stance:** After initial setup, the runtime makes no outbound network calls. This is a constitutional constraint, not a configuration option. There is no cloud inference fallback, no telemetry endpoint, and no remote configuration fetch. See [product.md](product.md) for the full non-goals list.
-
----
-
-## Dependencies
-
-Specific library versions and pinned dependencies are to be defined in the runtime foundation SPEC. The following categories will be resolved then:
-
-**Backend (`api/requirements.txt` or `pyproject.toml`, planned):**
-- FastAPI and ASGI server (e.g., uvicorn)
-- Model runtime client (depends on open decision: Ollama client, llama-cpp-python, or vLLM client)
-- Pydantic for request/response validation
-- Streaming transport library (depends on SSE vs WebSocket decision)
-
-**Frontend (`web/package.json`, planned):**
-- React and ReactDOM
-- TypeScript
-- Build tooling (depends on open decision: Vite or Next.js)
-- HTTP/streaming client library
-
-**Docker images (planned):**
-- Python base image for the API container
-- Node.js base image for the frontend container (or static build served by the API)
-- Model runtime image (depends on open decision: Ollama, llama.cpp server, or vLLM)
+**No-network stance:** After initial setup, the runtime makes no outbound network calls. Constitutional constraint; not a configuration option. See [product.md](product.md) for the full non-goals list.
 
 ---
 
-## Open Decisions
+## Open Decisions (carry-forward from pre-SPEC-INFRA-001)
 
-The following six decisions are unresolved and deferred to the runtime foundation SPEC. Agents working on Argus must not silently pick a side — these require explicit resolution.
+The following decisions remain unresolved and are deferred to follow-up SPECs:
 
-### 1. Model runtime: Ollama vs llama.cpp server vs vLLM
+1. **React framework wrapper** (bare Vite vs Next.js) — belongs to the UI SPEC
+2. **Streaming transport on the UI side** — backend uses SSE; UI SPEC decides how React consumes it
+3. **Smaller-model fallback UX** — how users opt into Llama 3.2 in a UI context
 
-**Why deferred:** Each option has different hardware requirements, API surface, and quantization support. Ollama is the easiest to operate but least flexible. llama.cpp server is the most hardware-efficient. vLLM targets GPU-heavy setups and is optimized for throughput. The minimum hardware target (open decision 3) must be known before this can be decided.
-
-### 2. Llama 4 variant and quantization
-
-**Why deferred:** Llama 4 has multiple variants (Scout, Maverick) and multiple quantization levels (Q4, Q5, Q8, FP16). The right choice depends on the minimum hardware target (open decision 3) and the model runtime (open decision 1). Picking a variant before hardware is specified risks targeting the wrong memory footprint.
-
-### 3. Minimum hardware target (RAM, GPU, CPU baseline)
-
-**Why deferred:** This sets the floor for all hardware-dependent decisions. Argus targets personal hardware, but "personal hardware" spans 8 GB unified memory MacBooks to workstations with 32 GB+ dedicated VRAM. The minimum spec determines which Llama 4 variant is viable and which model runtime is appropriate.
-
-### 4. Persistence story (model weights cache and future chat history)
-
-**Why deferred:** Model weights need a stable host path to survive container restarts. Chat history storage (SQLite, JSON files, or in-memory only) is out of scope for v1 but the directory layout must anticipate it. Docker volume strategy needs to be defined in the runtime foundation SPEC.
-
-### 5. Local web UI auth model
-
-**Why deferred:** Options range from no auth (bind to `127.0.0.1` only, trust the OS user boundary) to a simple bearer token to full session-based auth. The right choice depends on the threat model for a single-user local app. This is a security decision, not just a UX one.
-
-### 6. React framework wrapper (bare Vite vs Next.js) and streaming transport (SSE vs WebSocket)
-
-**Why deferred:** These two decisions are coupled. Next.js App Router has opinions about streaming that interact with SSE vs WebSocket choice. Bare Vite is simpler but has no built-in SSR. The decision affects the `web/` directory structure, the `Dockerfile` for the frontend container, and the API endpoint design. Both must be decided together in the runtime foundation SPEC.
+Decisions resolved by SPEC-INFRA-001 (no longer open):
+- Model runtime: Ollama (default)
+- Llama 4 variant: Scout
+- Hardware floor: 64 GB unified memory or 64 GB RAM + 24 GB VRAM
+- Persistence: named Docker volume for model weights
+- Auth model (v1): localhost bind + non-localhost header rejection

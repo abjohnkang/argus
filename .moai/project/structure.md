@@ -1,132 +1,142 @@
 # Argus — Project Structure
 
-This document describes the intended directory layout for Argus. The project has no source code yet. All paths marked **[planned]** do not exist on disk. Paths marked **[exists]** are present in the current repository.
+This document describes the directory layout for Argus as it exists after SPEC-INFRA-001 (runtime foundation).
 
 ---
 
 ## Current Repository Contents
 
-The repository currently contains only scaffolding and concept documents:
-
 ```
 argus/
-├── README.md           [exists]  Public project summary
-├── CONCEPT.md          [exists]  Vision, non-goals, runtime decisions, open questions
-├── CLAUDE.md           [exists]  MoAI execution directives and project rules
-├── LICENSE             [exists]  License file
-├── .gitignore          [exists]
-├── .mcp.json           [exists]  MCP server configuration
-├── .moai/              [exists]  MoAI scaffolding (config, specs, project docs)
-└── .claude/            [exists]  Claude Code agent definitions, rules, and skills
+├── README.md               Public project summary (quick start, API, security model)
+├── CONCEPT.md              Vision, non-goals, open questions
+├── CHANGELOG.md            Keep-a-Changelog format (created in SPEC-INFRA-001 sync)
+├── CLAUDE.md               MoAI execution directives and project rules
+├── LICENSE                 Apache-2.0
+├── pyproject.toml          Python project config (build, deps, test, lint tooling)
+├── docker-compose.yml      Two-service Compose stack (model + api)
+├── run_server.sh           Idempotent first-run + health-gated startup [project root]
+├── run_debug.sh            Foreground variant with debug logging [project root]
+├── .env.example            MODEL, API_PORT, OLLAMA_HOST documented
+├── .dockerignore           Excludes .moai/, .claude/, *.md, .venv/ etc. from build context
+├── .gitignore
+├── .mcp.json               MCP server configuration
+├── api/                    FastAPI service (see below)
+├── tests/integration/      Docker-dependent integration tests (see below)
+├── .moai/                  MoAI scaffolding (config, specs, project docs)
+└── .claude/                Claude Code agent definitions, rules, and skills
 ```
-
-No source code directories (`api/`, `web/`, `scripts/`) exist yet. They will be created during the runtime foundation SPEC implementation.
 
 ---
 
-## Planned Directory Layout
+## `api/` — FastAPI Service
 
-```
-argus/
-├── api/                [planned]  Python FastAPI backend
-├── web/                [planned]  React frontend
-├── scripts/            [planned]  Entry and utility shell scripts
-├── compose/            [planned]  Docker Compose and container configuration (alt: root-level)
-├── docs/               [planned]  User-facing documentation (optional, may skip if README suffices)
-├── .moai/              [exists]   MoAI scaffolding
-├── .claude/            [exists]   Claude Code configuration
-├── README.md           [exists]
-├── CONCEPT.md          [exists]
-├── CLAUDE.md           [exists]
-├── LICENSE             [exists]
-├── .gitignore          [exists]
-└── .mcp.json           [exists]
-```
-
-Note: `docker-compose.yml` may live at the repository root or inside `compose/`. This is an open decision to be resolved in the runtime foundation SPEC.
-
----
-
-## Planned Directory Purposes
-
-### `api/` [planned]
-
-Python FastAPI backend. Responsible for:
-
-- Receiving chat requests from the React frontend
-- Forwarding prompts to the local model runtime
-- Streaming responses back to the client (SSE or WebSocket — transport TBD)
-- Health check and readiness endpoints
-
-Expected internal structure (subject to SPEC):
+Python 3.12 backend. The only service exposed to the host. Talks to the Ollama
+`model` container over the internal Docker network.
 
 ```
 api/
-├── app/
-│   ├── main.py         Entry point, FastAPI application factory
-│   ├── routers/        Route definitions (chat, health)
-│   ├── services/       Model client and inference logic
-│   └── models/         Pydantic request/response schemas
-├── Dockerfile
-└── requirements.txt    (or pyproject.toml)
+├── __init__.py
+├── main.py             App factory, middleware registration, lifespan readiness poller
+├── inference.py        OllamaAdapter — @MX:ANCHOR runtime swap boundary
+├── security.py         LocalhostOnlyMiddleware (pure header-validation functions)
+├── state.py            ReadinessTracker (async-lock-protected LOADING → READY state machine)
+├── requirements.txt    Pinned runtime deps (fastapi, uvicorn, httpx, pydantic)
+├── Dockerfile          Python 3.12-slim image; runs uvicorn bound to 127.0.0.1:8000
+└── tests/              Unit tests (hermetic via respx; no Docker required)
+    ├── __init__.py
+    ├── test_main.py
+    ├── test_inference.py
+    ├── test_security.py
+    └── test_state.py
 ```
 
-### `web/` [planned]
+### Architectural pattern: API-in-front-of-runtime
 
-React frontend. Responsible for:
+`api/inference.py::OllamaAdapter` is the **single invariant contract** between Argus and the
+model runtime. The `@MX:ANCHOR` tag marks it as a high-fan_in boundary that must not be changed
+without updating all callers. Future runtime swaps (llama.cpp, vLLM) become configuration changes
+inside `inference.py`, not rewrites of every downstream consumer. The React UI (future SPEC) will
+only ever talk to the FastAPI routes — never to Ollama directly.
 
-- Chat UI (message input, streaming response display)
-- Connecting to the FastAPI backend for inference
-- Serving as the only user-facing interface
+### State machine: `/health` endpoint
 
-React framework choice (bare Vite vs Next.js) is an open decision. Expected internal structure depends on that choice and will be defined in the runtime foundation SPEC.
+Three internal states tracked by `ReadinessTracker`:
+- `LOADING` — initial state; `/health` returns `503 {"status":"loading"}`
+- `READY` — background poller confirmed Ollama has the model resident; `/health` returns `200 {"status":"ready"}`
 
-```
-web/
-├── src/
-│   ├── components/     React components (chat window, message bubble, input)
-│   ├── hooks/          Custom React hooks (streaming, state)
-│   └── main.tsx        Application entry point
-├── public/
-├── Dockerfile
-├── package.json
-└── tsconfig.json
-```
+Transitions are idempotent and protected by an async lock. The `@MX:NOTE` tag on the state machine
+in `main.py` documents the `loading → ready` contract so future contributors do not collapse it into
+a simpler boolean check.
 
-### `scripts/` [planned]
+### Defense in depth: localhost-only
 
-Shell scripts for operating the stack:
+Two independent layers enforce the localhost-only constraint:
 
-- `run_server.sh` — Start the full stack. Idempotent: pulls and builds Docker images, downloads model weights on first run; no-op on subsequent runs.
-- `run_debug.sh` — Same as `run_server.sh` with debug logging surfaced.
-
-Both scripts are the primary entry points for users. They require only Docker and Docker Compose to be installed on the host.
-
-### `compose/` or root `docker-compose.yml` [planned]
-
-Docker Compose configuration orchestrating all services (`api`, `web`, model runtime container). Placement (root vs `compose/` subdirectory) is an open decision to be resolved in the runtime foundation SPEC.
-
-### `docs/` [planned, optional]
-
-User-facing documentation beyond the README. May include installation guides, hardware requirements, and usage instructions. This directory will only be created if README.md proves insufficient.
-
-### `.moai/` [exists]
-
-MoAI-ADK scaffolding. Contains:
-
-- `config/` — Project configuration (quality, language, user, design settings)
-- `specs/` — SPEC documents (requirements, acceptance criteria)
-- `project/` — Living project documentation (`product.md`, `structure.md`, `tech.md`)
-
-### `.claude/` [exists]
-
-Claude Code configuration. Contains agent definitions, rules, skills, and hooks used by MoAI-ADK during development.
+1. **Docker port mapping** — `docker-compose.yml` uses `127.0.0.1:${API_PORT:-8000}:8000`.
+   The kernel never accepts a non-loopback TCP connection to this port.
+2. **`LocalhostOnlyMiddleware`** — reads `Host` and `Origin` headers on every request and rejects
+   anything not matching `127.0.0.1`, `localhost`, or `[::1]` with `403 Forbidden`.
+   Defends against DNS rebinding and misconfigured reverse proxies even if the bind is bypassed.
 
 ---
 
-## Notes on Layout Decisions
+## `tests/integration/` — Docker-Dependent Integration Tests
 
-- The `api/` and `web/` split reflects the clear backend/frontend separation and allows each service to have its own `Dockerfile`.
-- All services are containerized. The host filesystem is not modified by running Argus.
-- The planned structure is conservative: directories are created when their SPEC is implemented, not speculatively.
-- Exact internal structures within `api/` and `web/` will be defined in the runtime foundation SPEC.
+```
+tests/
+└── integration/
+    ├── __init__.py
+    ├── conftest.py         Docker availability check; skips all tests without running Docker
+    ├── test_docker_stack.py  Stack bring-up, health transition, Edge Case 2 (port in use)
+    └── test_api_endpoints.py  End-to-end endpoint assertions against real Ollama
+```
+
+Tests in this directory are marked `@pytest.mark.integration`. They require Docker + a running
+Ollama instance. On CI without Docker they collect cleanly and skip. The test fixture pulls
+`llama3.2:1b` (~1 GB) to avoid the 32–67 GB Scout download in CI.
+
+---
+
+## Project Root Files
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | Two-service stack: `model` (Ollama, internal only) + `api` (FastAPI, 127.0.0.1 host bind) |
+| `run_server.sh` | `docker compose up -d`, then poll `/health` until `200` or timeout. Idempotent re-runs are no-ops. |
+| `run_debug.sh` | `docker compose up` (foreground, no `-d`) with `OLLAMA_DEBUG=1` and API `debug` log level |
+| `.env.example` | Documented env vars: `MODEL` (default `llama4:scout`), `API_PORT` (default `8000`), `OLLAMA_HOST` (internal) |
+| `.dockerignore` | Keeps image build fast: excludes `.git/`, `.moai/`, `.claude/`, `*.md`, `__pycache__/`, `.venv/`, `run_*.sh` |
+| `pyproject.toml` | Build system, deps, pytest config, coverage gate (≥85%), ruff/black/isort settings |
+
+---
+
+## Named Docker Volume
+
+`argus_ollama_models` — mounted at `/root/.ollama` in the `model` service. Preserves the
+32–67 GB Llama 4 Scout weights across `docker compose down`. Only deleted by explicit
+`docker volume rm argus_ollama_models` or `docker compose down --volumes`.
+
+---
+
+## Planned Directories (not yet created)
+
+| Directory | Status | Notes |
+|---|---|---|
+| `web/` | Planned | React frontend (separate SPEC) |
+| `docs/` | Optional | User-facing docs beyond README; may stay README-only |
+
+---
+
+## `.moai/` — MoAI Scaffolding
+
+Contains:
+- `config/` — Project configuration (quality, language, user, design settings)
+- `specs/` — SPEC documents (SPEC-INFRA-001 complete; future SPECs TBD)
+- `project/` — Living project documentation (`product.md`, `structure.md`, `tech.md`)
+- `backups/` — Pre-modification snapshots created during `/moai sync`
+- `reports/` — Sync reports created during `/moai sync`
+
+## `.claude/` — Claude Code Configuration
+
+Agent definitions, rules, skills, and hooks used by MoAI-ADK during development.

@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-001
 version: 0.1.0
-status: draft
+status: completed
 created: 2026-06-04
 created_at: 2026-06-04
 updated: 2026-06-04
@@ -116,3 +116,57 @@ The following MX tags will be placed during `/moai run`:
 | `api/inference.py` (model-pull / download-progress path) | `@MX:WARN` | Long-running operation with partial-state risk. A 32–67 GB pull interrupted mid-stream must resume cleanly. Requires `@MX:REASON` documenting the resume contract. |
 | `api/main.py` (localhost middleware) | `@MX:NOTE` | Security invariant. Documents that `127.0.0.1` bind + non-localhost header rejection together constitute the v1 threat model, and that this is intentional (no bearer token auth in v1). |
 | `api/main.py` (readiness state machine for `/health`) | `@MX:NOTE` | Documents the `loading → ready` transition contract referenced by REQ-INFRA-003 so future contributors do not collapse it into a single `200`/`404` check. |
+
+---
+
+## Implementation Notes
+
+This section is appended by `/moai sync SPEC-INFRA-001` after the Run phase completed.
+
+### Commits delivered (branch: feature/SPEC-INFRA-001-runtime-foundation)
+
+| SHA | Message |
+|---|---|
+| `68652ce` | feat(infra): Python FastAPI core + unit tests (api/ + pyproject.toml + .env.example) |
+| `c5c3bcf` | feat(infra): Docker Compose stack + entry scripts (Dockerfile, docker-compose.yml, run_server.sh, run_debug.sh at project root) |
+| `e16caf1` | test(infra): integration tests against real Ollama (tests/integration/) |
+| `5e7a5ef` | docs(spec): SPEC document synchronization (HISTORY entries, REQ map, Edge Case 1 manual procedure) |
+
+### Files created
+
+24 total: 15 Python source/test files (`api/*.py`, `api/tests/*.py`, `tests/integration/*.py`), 5 Docker/scripts (`docker-compose.yml`, `api/Dockerfile`, `run_server.sh`, `run_debug.sh`, `.dockerignore`), 4 config/env files (`pyproject.toml`, `api/requirements.txt`, `.env.example`, `api/__init__.py`).
+
+### Test results
+
+- Unit tests: 103 pass, hermetic (no Docker, no network), via respx-mocked Ollama
+- Integration tests: 6 collect + skip cleanly without Docker; pass with real Docker + Ollama (`llama3.2:1b`)
+- Coverage on `api/`: **92.62%** (gate: ≥85%; enforced by `pytest-cov fail_under=85`)
+
+### MX tags placed
+
+8 tags placed per MX Tag Plan (all 4 rows covered) plus 1 additional `@MX:ANCHOR` on the `OllamaUnavailable` exception contract in `api/inference.py`:
+
+| Tag | File | Purpose |
+|---|---|---|
+| `@MX:ANCHOR` | `api/inference.py` (OllamaAdapter class) | Runtime swap boundary — single invariant contract |
+| `@MX:ANCHOR` | `api/inference.py` (OllamaUnavailable exception) | Exception contract: upstream 5xx + connect/timeout → 502 |
+| `@MX:WARN` + `@MX:REASON` | `api/inference.py` (pull path) | Long-running partial-state risk; Ollama resume contract documented |
+| `@MX:NOTE` | `api/main.py` (LocalhostOnlyMiddleware) | Security invariant: v1 threat model (localhost bind + header rejection) |
+| `@MX:NOTE` | `api/main.py` (readiness poller) | Loading → ready transition contract (REQ-INFRA-003) |
+| `@MX:NOTE` | `api/state.py` (ReadinessTracker) | Async-lock-protected state machine; idempotent transitions |
+| `@MX:NOTE` | `api/security.py` | Pure-function header validators; no side effects |
+| `@MX:NOTE` | `docker-compose.yml` (port mapping) | REQ-INFRA-001 enforcement note |
+
+### Quality verdicts
+
+- **TRUST 5**: PASS (Tested 92.62%, Readable ruff+black+isort clean, Unified consistent style, Secured no 0.0.0.0 bind, Trackable SPEC-INFRA-001 in all commits)
+- **evaluator-active 4-dimension**: PASS after fix cycle 1
+  - Security: 90 (localhost enforcement + header rejection; no bearer token as designed)
+  - Craft: 82 (clean separation of concerns; OllamaAdapter boundary; ReadinessTracker state machine)
+  - Consistency: 90 (OpenAI-compatible API surface; consistent error shapes)
+  - Functionality: PASS post-fix-cycle (Edge Case 2 automated test added; Edge Case 1 reclassified as manual)
+
+### User directives executed mid-run
+
+1. **Entry script relocation**: Scripts moved from `scripts/run_server.sh` / `scripts/run_debug.sh` to project root (`./run_server.sh` / `./run_debug.sh`) to align with `CLAUDE.md` "Planned architecture". REQ-INFRA-002 wording and `.dockerignore` updated accordingly.
+2. **Edge Case 1 reclassification**: Mid-pull interruption scenario reclassified from automated to manual verification after evaluator-active flagged it untestable reliably. 8-step manual procedure documented in `acceptance.md`; `@MX:WARN` + `@MX:REASON` placed on the pull path in `api/inference.py` to document the Ollama upstream resume contract.

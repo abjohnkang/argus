@@ -10,6 +10,8 @@ Privacy-focused individuals running offline AI on personal Mac or Linux hardware
 
 This is a single-user product. Enterprise deployment, team sharing, and multi-user scenarios are out of scope.
 
+**Hardware profile for v1:** Privacy-individual with serious-but-attainable personal hardware — 64 GB unified memory Mac (M-Pro/M-Max or Mac Studio) or 64 GB RAM + 24 GB VRAM x86 workstation. Users below this floor can use `MODEL=llama3.2:3b` as a documented downgrade that preserves the on-device promise.
+
 ---
 
 ## Core Value Propositions
@@ -24,19 +26,60 @@ This is a single-user product. Enterprise deployment, team sharing, and multi-us
 
 ---
 
-## First-Milestone Feature Scope
+## SPEC-INFRA-001 Delivery (Runtime Foundation, v1)
+
+SPEC-INFRA-001 is the first implementation milestone. It delivers the minimal on-device LLM stack that every later feature depends on.
+
+### What v1 ships
+
+- **Localhost-bound HTTP API in Docker** — FastAPI service (`api/`) serving Llama 4 Scout inference behind three OpenAI-compatible endpoints.
+- **`GET /health`** — `503 {"status":"loading"}` during cold start; `200 {"status":"ready"}` once the model is resident. State machine prevents requests from reaching the model while it is still loading.
+- **`GET /v1/models`** — lists models known to the configured Ollama runtime.
+- **`POST /v1/chat/completions`** — SSE streaming chat with token-by-token delivery.
+- **MODEL env var override** — `MODEL=llama3.2:3b ./run_server.sh` uses a smaller model with no source file modifications.
+- **Named Docker volume `argus_ollama_models`** — preserves the 32–67 GB Llama 4 Scout weights across `docker compose down`. One-time pull; subsequent runs are instant.
+- **Idempotent entry scripts at project root** — `run_server.sh` (health-gated cold start) and `run_debug.sh` (foreground with debug logging). Re-runs on a healthy stack are no-ops.
+- **Defense-in-depth localhost enforcement** — Docker port mapping binds host side to `127.0.0.1`; `LocalhostOnlyMiddleware` rejects forged Host/Origin headers with `403`.
+
+### Demo state at end of SPEC-INFRA-001
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama4:scout","messages":[{"role":"user","content":"hi"}],"stream":true}'
+```
+
+Streaming tokens from a local Llama 4 Scout — nothing more, nothing less.
+
+### What v1 explicitly does NOT ship
+
+Per SPEC-INFRA-001 Exclusions (not in scope, not to be implemented until corresponding SPECs):
+
+- No React web UI (separate SPEC)
+- No conversation persistence or chat history
+- No bearer token or session auth
+- No vLLM support
+- No Llama 4 Maverick or Behemoth (hardware out of reach)
+- No llama.cpp escape hatch in v1 (deferred follow-up SPEC; `compose.llamacpp.yml` overlay planned)
+- No agent tools (file I/O, web fetch, code execution)
+- No automatic hardware preflight check
+- No rate limiting
+
+---
+
+## First-Milestone Feature Scope (pre-SPEC-INFRA-001, preserved)
 
 The first milestone is a working chat UI backed by local Llama 4 streaming inference. It is the smallest demo-worthy vertical slice: open a browser, type a message, see Llama 4 stream a response from the local container.
 
-**In scope for v1:**
+**In scope for the full first milestone (across multiple SPECs):**
 
-- Chat UI (React, browser-based)
-- Local Llama 4 inference via the Python backend
-- Streaming response output (token-by-token)
-- Docker Compose orchestration of all services
-- `run_server.sh` and `run_debug.sh` entry scripts (idempotent: pull images and download weights on first run, no-op on subsequent runs)
+- Chat UI (React, browser-based) — follow-up SPEC
+- Local Llama 4 inference via the Python backend — delivered in SPEC-INFRA-001
+- Streaming response output (token-by-token) — delivered in SPEC-INFRA-001
+- Docker Compose orchestration of all services — delivered in SPEC-INFRA-001
+- `run_server.sh` and `run_debug.sh` entry scripts — delivered in SPEC-INFRA-001
 
-**Explicit non-goals for v1:**
+**Explicit non-goals for the full first milestone:**
 
 - No cloud inference or hosted model fallback
 - No telemetry or usage analytics
