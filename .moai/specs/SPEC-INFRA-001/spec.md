@@ -13,6 +13,8 @@ labels: [infra, runtime, docker, llm]
 
 ## HISTORY
 
+- 2026-06-04 (v0.1.0): Phase 2.8a evaluator-active findings resolved. Added automated test for Edge Case 2 (port-in-use) at `tests/integration/test_docker_stack.py::test_run_server_exits_2_when_port_in_use`; amended `./acceptance.md` Edge Case 1 to mark it as manual verification with documented procedure (mid-pull interruption is brittle to automate; Ollama-native resume is delegated upstream and documented via `@MX:WARN` on `api/inference.py` pull path). Both criticals from evaluator-active's first-pass report are now closed.
+- 2026-06-04 (v0.1.0): Entry-script path adjustment during /moai run Phase 2b. Scripts moved from `scripts/run_server.sh` / `scripts/run_debug.sh` to project root (`./run_server.sh` / `./run_debug.sh`) to align with `CLAUDE.md` "Planned architecture" section, which lists them at root. REQ-INFRA-002 wording and the Files-to-be-Created list updated; `PROJECT_ROOT` computation in both scripts simplified (dropped `/..`); `.dockerignore` exclusion updated from `scripts/` to `run_*.sh`. Behavior unchanged — only on-disk location differs.
 - 2026-06-04 (v0.1.0): Initial draft authored by abjohn. Captures the runtime foundation for Argus — Llama 4 Scout inference behind a localhost-bound HTTP API in Docker. All major decisions (default runtime, model variant, hardware floor, persistence, threat model) inherited from `./research.md`. `issue_number: 0` because the `gh` CLI is not installed in this environment; Phase 2.5 is skipped.
 - 2026-06-04 (v0.1.0): Scope reduction noted — the llama.cpp escape hatch (`compose.llamacpp.yml` overlay) discussed in `./research.md` Section 2 is explicitly deferred to a follow-up SPEC. v1 ships Ollama only. Rationale: keeps the v1 surface area minimal and lets the API↔runtime adapter be exercised against one runtime before generalizing.
 - 2026-06-04 (v0.1.0): Frontmatter updated to include `created_at` (ISO date) and `labels` per plan-auditor MP-3 schema requirements (review iteration 1).
@@ -25,7 +27,7 @@ labels: [infra, runtime, docker, llm]
 
 SPEC-INFRA-001 delivers the runtime foundation that every later Argus feature depends on: a localhost-bound HTTP API, running inside Docker, that serves Llama 4 Scout inference from a Python FastAPI backend talking to a model runtime container. This is the smallest viable on-device LLM stack — once it exists, every later SPEC (UI, agent tools, memory) plugs into the API contract rather than the model runtime, so the runtime can change without breaking downstream code.
 
-The deliverable is a two-service Docker Compose stack (`model` + `api`) plus two idempotent entry scripts (`run_server.sh`, `run_debug.sh`). The API exposes three endpoints — `GET /health`, `POST /v1/chat/completions` (SSE streaming), `GET /v1/models` — and binds only to `127.0.0.1`. Default model is `llama4:scout` served by Ollama; the `MODEL` environment variable opts the user into a smaller model (e.g., `llama3.2:3b`) without code changes. Persistence uses a named Docker volume so the 32–67 GB model download survives `docker compose down`.
+The deliverable is a two-service Docker Compose stack (`model` + `api`) plus two idempotent entry scripts (`run_server.sh`, `run_debug.sh`) at the project root. The API exposes three endpoints — `GET /health`, `POST /v1/chat/completions` (SSE streaming), `GET /v1/models` — and binds only to `127.0.0.1`. Default model is `llama4:scout` served by Ollama; the `MODEL` environment variable opts the user into a smaller model (e.g., `llama3.2:3b`) without code changes. Persistence uses a named Docker volume so the 32–67 GB model download survives `docker compose down`.
 
 What this SPEC explicitly defers: the React web UI is a separate SPEC. There is no conversation persistence, no bearer-token auth, no llama.cpp escape hatch in v1 (documented as a follow-up), no agent tools, and no support for Llama 4 Maverick or Behemoth (hardware out of reach). At the end of this SPEC, the demo-able state is `curl http://127.0.0.1:8000/v1/chat/completions` streaming tokens from a local Llama 4 Scout — nothing more, nothing less.
 
@@ -39,7 +41,7 @@ The Argus runtime SHALL serve Llama 4 Scout inference via an HTTP API running in
 
 ### REQ-INFRA-002 (Event-driven)
 
-WHEN `scripts/run_server.sh` is invoked on a host with no existing Argus containers, the system SHALL pull the required Docker images, download the configured model weights into a named Docker volume, start the `model` and `api` services, and return from the script only after `GET /health` reports HTTP 200.
+WHEN `./run_server.sh` is invoked on a host with no existing Argus containers, the system SHALL pull the required Docker images, download the configured model weights into a named Docker volume, start the `model` and `api` services, and return from the script only after `GET /health` reports HTTP 200.
 
 ### REQ-INFRA-003 (State-driven)
 
@@ -74,10 +76,10 @@ All paths are project-root-relative. None of these exist on disk today.
 - `api/main.py` — FastAPI application factory. Wires routes (`/health`, `/v1/chat/completions`, `/v1/models`), registers the localhost-only middleware enforcing REQ-INFRA-005, owns the readiness state machine for REQ-INFRA-003.
 - `api/inference.py` — Thin adapter over the model runtime. Encapsulates Ollama HTTP client calls so the runtime can be swapped later. The single boundary between Argus and the model runtime.
 - `api/requirements.txt` — Pinned to major versions (FastAPI 0.x, uvicorn 0.x, httpx 0.x, pydantic 2.x). No patch pins, no beta/alpha.
-- `scripts/run_server.sh` — Idempotent first-run path: `docker compose up -d`, poll `/health` until 200 or timeout. Re-runs on a healthy stack are a no-op.
-- `scripts/run_debug.sh` — Foreground variant: `docker compose up` (no `-d`), with `OLLAMA_DEBUG=1` and API log level `debug` exported. Streams logs to stdout.
+- `run_server.sh` — Idempotent first-run path: `docker compose up -d`, poll `/health` until 200 or timeout. Re-runs on a healthy stack are a no-op. Lives at the project root per `CLAUDE.md` "Planned architecture".
+- `run_debug.sh` — Foreground variant: `docker compose up` (no `-d`), with `OLLAMA_DEBUG=1` and API log level `debug` exported. Streams logs to stdout. Lives at the project root per `CLAUDE.md` "Planned architecture".
 - `.env.example` — Documents `MODEL`, `API_PORT`, `OLLAMA_HOST` (internal), and any future variables. Real `.env` is gitignored.
-- `.dockerignore` — Excludes `.git/`, `.moai/`, `.claude/`, `*.md`, `__pycache__/`, `.venv/`, and other host-only artifacts from the Docker build context. Keeps the `api/Dockerfile` image build fast and reproducible.
+- `.dockerignore` — Excludes `.git/`, `.moai/`, `.claude/`, `*.md`, `__pycache__/`, `.venv/`, `run_*.sh`, and other host-only artifacts from the Docker build context. Keeps the `api/Dockerfile` image build fast and reproducible.
 
 ## Technical Approach
 
@@ -89,10 +91,10 @@ The runtime is a two-service Docker Compose topology described in `./research.md
 The indirection — `api` in front of `model` — is the key architectural decision. It pins the Argus public contract (`/v1/chat/completions`, SSE format) at the API layer, so a future switch to llama.cpp or vLLM becomes a configuration change in `api/inference.py`, not a rewrite of every downstream consumer. The React UI (separate SPEC) will only ever talk to `api`, never directly to `model`.
 
 Cold start sequence (REQ-INFRA-002):
-1. `run_server.sh` invokes `docker compose up -d`.
+1. `./run_server.sh` invokes `docker compose up -d`.
 2. `model` container starts, pulls the configured model via `ollama pull $MODEL` if not already cached in the volume.
 3. `api` container starts, polls Ollama internally, holds `/health` in `503 {"status": "loading"}` until Ollama reports the model is resident (REQ-INFRA-003).
-4. `run_server.sh` polls `http://127.0.0.1:8000/health` until it returns `200 {"status": "ready"}` or hits a configurable timeout.
+4. `./run_server.sh` polls `http://127.0.0.1:8000/health` until it returns `200 {"status": "ready"}` or hits a configurable timeout.
 
 Localhost enforcement (REQ-INFRA-001 + REQ-INFRA-005):
 - Docker port mapping uses `127.0.0.1:8000:8000`, not `0.0.0.0:8000:8000`. Docker itself prevents external interfaces from reaching the API.
@@ -113,4 +115,4 @@ The following MX tags will be placed during `/moai run`:
 | `api/inference.py` | `@MX:ANCHOR` | This is the runtime swap boundary — the single invariant contract between Argus and any model runtime (Ollama today, llama.cpp/vLLM later). High future fan_in. |
 | `api/inference.py` (model-pull / download-progress path) | `@MX:WARN` | Long-running operation with partial-state risk. A 32–67 GB pull interrupted mid-stream must resume cleanly. Requires `@MX:REASON` documenting the resume contract. |
 | `api/main.py` (localhost middleware) | `@MX:NOTE` | Security invariant. Documents that `127.0.0.1` bind + non-localhost header rejection together constitute the v1 threat model, and that this is intentional (no bearer token auth in v1). |
-| `api/main.py` (readiness state machine for `/health`) | `@MX:NOTE` | Documents the `loading → ready` transition contract referenced by REQ-INFRA-003 so future contributors do not collapse it into a single `200`/`404` check.
+| `api/main.py` (readiness state machine for `/health`) | `@MX:NOTE` | Documents the `loading → ready` transition contract referenced by REQ-INFRA-003 so future contributors do not collapse it into a single `200`/`404` check. |

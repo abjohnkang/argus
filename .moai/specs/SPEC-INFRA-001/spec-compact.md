@@ -12,7 +12,7 @@ The Argus runtime SHALL serve Llama 4 Scout inference via an HTTP API running in
 
 ### REQ-INFRA-002 (Event-driven)
 
-WHEN `scripts/run_server.sh` is invoked on a host with no existing Argus containers, the system SHALL pull the required Docker images, download the configured model weights into a named Docker volume, start the `model` and `api` services, and return from the script only after `GET /health` reports HTTP 200.
+WHEN `./run_server.sh` is invoked on a host with no existing Argus containers, the system SHALL pull the required Docker images, download the configured model weights into a named Docker volume, start the `model` and `api` services, and return from the script only after `GET /health` reports HTTP 200.
 
 ### REQ-INFRA-003 (State-driven)
 
@@ -33,7 +33,7 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 ### Scenario 1: Cold start from clean Docker environment
 
 - **Given** a host with Docker and Docker Compose installed, no Argus containers running, no `argus_ollama_models` volume present, and the configured `MODEL` is the default `llama4:scout`,
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** Docker images for the `model` and `api` services are pulled,
 - **And** the `llama4:scout` weights are downloaded into the named Docker volume `argus_ollama_models`,
 - **And** both services reach a running state,
@@ -70,8 +70,8 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 
 ### Scenario 5: Idempotent restart
 
-- **Given** a healthy Argus stack started by a previous `scripts/run_server.sh` invocation (Scenario 1 outcome),
-- **When** the operator runs `scripts/run_server.sh` a second time,
+- **Given** a healthy Argus stack started by a previous `./run_server.sh` invocation (Scenario 1 outcome),
+- **When** the operator runs `./run_server.sh` a second time,
 - **Then** the script exits with code 0,
 - **And** no error is printed,
 - **And** the stack remains healthy (`/health` still returns `200 {"status": "ready"}`),
@@ -81,7 +81,7 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 ### Scenario 6: Model override via environment variable
 
 - **Given** a clean Docker environment (no existing `argus_ollama_models` volume, no running containers) and `MODEL=llama3.2:3b` exported in the environment (or set in `.env`),
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** the `model` service pulls `llama3.2:3b` (verifiable in container logs),
 - **And** `llama4:scout` is NOT pulled,
 - **And** after the script returns, `curl http://127.0.0.1:8000/v1/models` lists `llama3.2:3b`,
@@ -91,7 +91,7 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 ### Edge case 1: Partial model download interrupted
 
 - **Given** a model pull was interrupted mid-download (e.g., the `model` container was killed at 40% progress, leaving partial blobs in the volume),
-- **When** the operator re-invokes `scripts/run_server.sh`,
+- **When** the operator re-invokes `./run_server.sh`,
 - **Then** the model service resumes the pull from where it stopped (Ollama native resume behavior),
 - **And** does NOT restart the download from zero,
 - **And** eventually reaches the ready state,
@@ -100,7 +100,7 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 ### Edge case 2: Host port already in use
 
 - **Given** another process on the host is already bound to `127.0.0.1:8000`,
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** the script detects the Compose `up` failure,
 - **And** exits with a non-zero exit code,
 - **And** prints a clear error message identifying port 8000 as the cause,
@@ -116,8 +116,8 @@ IF the HTTP API receives a request whose `Host` header value or whose `Origin` h
 - `api/main.py`
 - `api/inference.py`
 - `api/requirements.txt`
-- `scripts/run_server.sh`
-- `scripts/run_debug.sh`
+- `run_server.sh`
+- `run_debug.sh`
 - `.env.example`
 - `.dockerignore`
 

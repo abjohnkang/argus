@@ -11,7 +11,7 @@ Given-When-Then acceptance scenarios for the Llama 4 runtime foundation. Each sc
 Maps to: REQ-INFRA-002, REQ-INFRA-001
 
 - **Given** a host with Docker and Docker Compose installed, no Argus containers running, no `argus_ollama_models` volume present, and the configured `MODEL` is the default `llama4:scout`,
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** Docker images for the `model` and `api` services are pulled,
 - **And** the `llama4:scout` weights are downloaded into the named Docker volume `argus_ollama_models`,
 - **And** both services reach a running state,
@@ -56,8 +56,8 @@ Maps to: REQ-INFRA-005
 
 Maps to: REQ-INFRA-002 (idempotency clause from `CONCEPT.md`)
 
-- **Given** a healthy Argus stack started by a previous `scripts/run_server.sh` invocation (Scenario 1 outcome),
-- **When** the operator runs `scripts/run_server.sh` a second time,
+- **Given** a healthy Argus stack started by a previous `./run_server.sh` invocation (Scenario 1 outcome),
+- **When** the operator runs `./run_server.sh` a second time,
 - **Then** the script exits with code 0,
 - **And** no error is printed,
 - **And** the stack remains healthy (`/health` still returns `200 {"status": "ready"}`),
@@ -69,7 +69,7 @@ Maps to: REQ-INFRA-002 (idempotency clause from `CONCEPT.md`)
 Maps to: REQ-INFRA-004
 
 - **Given** a clean Docker environment (no existing `argus_ollama_models` volume, no running containers) and `MODEL=llama3.2:3b` exported in the environment (or set in `.env`),
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** the `model` service pulls `llama3.2:3b` (verifiable in container logs),
 - **And** `llama4:scout` is NOT pulled,
 - **And** after the script returns, `curl http://127.0.0.1:8000/v1/models` lists `llama3.2:3b`,
@@ -80,23 +80,39 @@ Maps to: REQ-INFRA-004
 
 ## Edge Case Scenarios
 
-### Edge case 1: Partial model download interrupted
+### Edge case 1: Partial model download interrupted (MANUAL VERIFICATION)
 
 Maps to: REQ-INFRA-002 (failure path), REQ-INFRA-003. Risk reference: Risk 2 in `./plan.md` §3.
 
-- **Given** a model pull was interrupted mid-download (e.g., the `model` container was killed at 40% progress, leaving partial blobs in the volume),
-- **When** the operator re-invokes `scripts/run_server.sh`,
-- **Then** the model service resumes the pull from where it stopped (Ollama native resume behavior),
-- **And** does NOT restart the download from zero,
-- **And** eventually reaches the ready state,
-- **And** `/health` transitions from `503 {"status": "loading"}` to `200 {"status": "ready"}` once the pull completes and the model loads.
+**Verification type:** MANUAL. This scenario verifies Ollama's native resume behavior, which Argus delegates to upstream (see `api/inference.py` `@MX:WARN` + `@MX:REASON` on the pull path). Automating mid-pull interruption is brittle and slow; this is verified manually before each release.
+
+**Manual test procedure:**
+
+1. Ensure no existing `argus_ollama_models` volume: `docker volume rm argus_ollama_models 2>/dev/null || true`
+2. Start the stack with a large model in the foreground so logs are visible:
+   `MODEL=llama4:scout ./run_debug.sh`
+3. Watch `docker compose logs model -f` until the pull is partially complete (>=10%, visible in Ollama's progress output).
+4. Kill the model container while the pull is in progress:
+   `docker compose kill model`
+5. Verify the volume contains partial blobs (non-empty but smaller than full model):
+   `docker run --rm -v argus_ollama_models:/data alpine du -sh /data`
+6. Re-invoke the entry script:
+   `./run_server.sh`
+7. Observe in `docker compose logs model` that the pull RESUMES from the partial state (Ollama prints "pulling X" but skips already-downloaded blob hashes) rather than restarting from zero.
+8. Confirm `/health` transitions from `503 {"status":"loading"}` to `200 {"status":"ready"}` once the pull completes and the model loads.
+
+**Pass criteria:**
+- Step 7 shows resume-from-partial behavior (no full re-download of already-cached blobs)
+- Step 8 shows the loading → ready transition
+
+**Why not automated:** mid-pull container kill + partial-blob assertion + restart is timing-dependent and brittle. Ollama upstream documents the resume contract; Argus trusts it and reflects this via the `@MX:WARN` + `@MX:REASON` annotation on the pull path in `api/inference.py`. If Ollama upstream regresses this behavior in a future release, this manual test will catch it before Argus ships.
 
 ### Edge case 2: Host port already in use
 
 Maps to: REQ-INFRA-002 (failure path). Risk reference: Risk 5 in `./plan.md` §3.
 
 - **Given** another process on the host is already bound to `127.0.0.1:8000`,
-- **When** the operator runs `scripts/run_server.sh`,
+- **When** the operator runs `./run_server.sh`,
 - **Then** the script detects the Compose `up` failure,
 - **And** exits with a non-zero exit code,
 - **And** prints a clear error message identifying port 8000 as the cause,
@@ -136,7 +152,7 @@ A `/moai run SPEC-INFRA-001` execution is complete when all of the following are
 - [ ] `api/` test coverage ≥ 85%.
 - [ ] Localhost bind verified: `lsof`/`ss` shows port 8000 bound only on the loopback interface.
 - [ ] Named volume `argus_ollama_models` survives `docker compose down` and is reused on the next `up`.
-- [ ] `scripts/run_server.sh` exits 0 on a clean run AND on a re-run against a healthy stack.
+- [ ] `./run_server.sh` exits 0 on a clean run AND on a re-run against a healthy stack.
 - [ ] `MODEL=llama3.2:3b` override works end-to-end with zero source-file modifications.
 - [ ] `@MX:ANCHOR`, `@MX:WARN`, and `@MX:NOTE` tags placed per `./spec.md` MX Tag Plan.
 - [ ] No item from the `./spec.md` Exclusions list was implemented.

@@ -16,9 +16,9 @@ Tasks are ordered for sequential execution. Each task produces a single file or 
 | 4 | Write `api/Dockerfile` using `python:3.12-slim`, install deps, copy `api/`, run `uvicorn` bound to `127.0.0.1:8000`. | `api/Dockerfile` | Task 3 |
 | 5 | Implement `api/inference.py` adapter: Ollama HTTP client wrapper exposing `chat_completion_stream()`, `list_models()`, `is_ready()`. This is the `@MX:ANCHOR` boundary. | `api/inference.py` | Task 3 |
 | 6 | Implement `api/main.py`: FastAPI app factory, register `/health` (state-driven per REQ-INFRA-003), `/v1/chat/completions` (SSE streaming), `/v1/models`. Wire localhost middleware (REQ-INFRA-005). Wire model-readiness state machine. | `api/main.py` | Tasks 4, 5 |
-| 7 | Write `scripts/run_server.sh`: `docker compose up -d`, poll `http://127.0.0.1:8000/health` until 200 or timeout. Idempotent on healthy stack. | `scripts/run_server.sh` | Task 2 |
-| 8 | Write `scripts/run_debug.sh`: `docker compose up` (foreground), export `OLLAMA_DEBUG=1` and `LOG_LEVEL=debug`. | `scripts/run_debug.sh` | Task 2 |
-| 9 | Add `.dockerignore` covering `__pycache__`, `.venv`, `.moai`, `.claude`, `node_modules`, etc., to keep build context lean. | `.dockerignore` | — |
+| 7 | Write `run_server.sh` (project root): `docker compose up -d`, poll `http://127.0.0.1:8000/health` until 200 or timeout. Idempotent on healthy stack. | `run_server.sh` | Task 2 |
+| 8 | Write `run_debug.sh` (project root): `docker compose up` (foreground), export `OLLAMA_DEBUG=1` and `LOG_LEVEL=debug`. | `run_debug.sh` | Task 2 |
+| 9 | Add `.dockerignore` covering `__pycache__`, `.venv`, `.moai`, `.claude`, `node_modules`, `run_*.sh`, etc., to keep build context lean. | `.dockerignore` | — |
 | 10 | Acceptance harness: cold start, loading-state, streaming, localhost rejection, idempotent restart, model override (per `./acceptance.md`). | `tests/` or shell-based check, scope determined in `/moai run` | All above |
 
 Ten discrete tasks. Each is small enough to complete inside a single iteration; none requires more than one file write.
@@ -50,14 +50,14 @@ Pulled from `./research.md` Section 7. Three primary risks plus two operational 
 ### Risk 1: Hardware floor excludes users
 
 - **Source:** `./research.md` §7 hard risk #1.
-- **Impact:** A 16 GB MacBook user runs `scripts/run_server.sh`, the model download finishes (or fails mid-stream), and inference is unusably slow or OOM-killed.
+- **Impact:** A 16 GB MacBook user runs `./run_server.sh`, the model download finishes (or fails mid-stream), and inference is unusably slow or OOM-killed.
 - **Mitigation:** REQ-INFRA-004 explicitly supports `MODEL=llama3.2:3b` as the documented fallback. Product copy (separate from this SPEC) surfaces the 64 GB recommended floor prominently. The runtime does not preflight hardware (out of scope per `./spec.md` exclusions); failures surface as Ollama OOM or slow tokens/sec.
 
 ### Risk 2: Model download UX on first run
 
 - **Source:** `./research.md` §7 hard risk #2.
 - **Impact:** 32–67 GB pull is a long-running operation. Network interruption mid-pull leaves the volume in a partial state.
-- **Mitigation:** Ollama handles resume natively for `ollama pull`. `scripts/run_server.sh` invokes Compose, which restarts the model service if it exits; Ollama then picks up where it left off. `api/inference.py` model-pull path carries an `@MX:WARN` tag documenting the partial-state contract. Acceptance scenario "partial model download interrupted" verifies this.
+- **Mitigation:** Ollama handles resume natively for `ollama pull`. `./run_server.sh` invokes Compose, which restarts the model service if it exits; Ollama then picks up where it left off. `api/inference.py` model-pull path carries an `@MX:WARN` tag documenting the partial-state contract. Acceptance scenario "partial model download interrupted" verifies this.
 
 ### Risk 3: Architecture lock-in if API contract is loose
 
@@ -73,7 +73,7 @@ Pulled from `./research.md` Section 7. Three primary risks plus two operational 
 ### Risk 5: Host port already in use
 
 - **Impact:** Another process holds port 8000; Compose fails partway through `up -d`. User sees a confusing half-started state.
-- **Mitigation:** `scripts/run_server.sh` detects Compose failure and exits with a clear error. `API_PORT` env var allows override. Acceptance edge case "host port already in use" verifies the error path.
+- **Mitigation:** `./run_server.sh` detects Compose failure and exits with a clear error. `API_PORT` env var allows override. Acceptance edge case "host port already in use" verifies the error path.
 
 ---
 
@@ -100,7 +100,7 @@ Detailed Given/When/Then scenarios live in `./acceptance.md`. This is the scope 
 - **Loading-state unit test** (`./acceptance.md` scenario 2): `api/main.py` `/health` returns `503 {"status": "loading"}` while the adapter reports model not ready.
 - **Streaming integration test** (`./acceptance.md` scenario 3): `POST /v1/chat/completions` with `stream: true` returns SSE-framed chunks ending with `data: [DONE]`.
 - **Localhost rejection unit test** (`./acceptance.md` scenario 4): middleware returns 403 for non-localhost `Host`/`Origin` headers and never invokes the adapter.
-- **Idempotent restart shell test** (`./acceptance.md` scenario 5): running `scripts/run_server.sh` twice in succession leaves the stack healthy and produces no error.
+- **Idempotent restart shell test** (`./acceptance.md` scenario 5): running `./run_server.sh` twice in succession leaves the stack healthy and produces no error.
 - **Model override integration test** (`./acceptance.md` scenario 6): `MODEL=llama3.2:3b` produces a `llama3.2:3b` pull and `/v1/models` reflects this.
 
 ### Test placement
