@@ -32,6 +32,23 @@ API_PORT="${API_PORT:-8000}"
 HEALTH_URL="http://127.0.0.1:${API_PORT}/health"
 TIMEOUT_SECONDS="${ARGUS_HEALTH_TIMEOUT:-600}"
 
+# Stale-container detection (REQ-INFRA-002 Scenario 5 idempotency preserved):
+# If Argus containers are running but /health is unreachable, the stack is
+# stale — tear it down (named volume preserved, no model re-pull) so the
+# subsequent `docker compose up -d` succeeds without name conflicts. If
+# /health already responds 200, the stack is healthy — we skip the down
+# entirely so the up below is a no-op and the /health poll exits
+# immediately (Scenario 5: containers not recreated unnecessarily).
+RUNNING_CONTAINERS="$(docker compose ps --status running --quiet 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${RUNNING_CONTAINERS}" -gt 0 ]; then
+  if curl -sf -o /dev/null --max-time 3 "${HEALTH_URL}" 2>/dev/null; then
+    echo "Argus stack is already healthy at ${HEALTH_URL}; skipping recreate."
+  else
+    echo "Detected ${RUNNING_CONTAINERS} stale Argus container(s); tearing down before fresh start."
+    docker compose down --remove-orphans 2>/dev/null || true
+  fi
+fi
+
 # Pre-flight: host port available (best-effort; lsof may not be installed).
 if command -v lsof >/dev/null 2>&1; then
   if lsof -nP -iTCP:"${API_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
