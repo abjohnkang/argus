@@ -27,6 +27,14 @@ All notable changes to Argus are documented here. Format follows [Keep a Changel
 - Manual test procedure for Edge Case 1 (partial model pull resume) documented in `.moai/specs/SPEC-INFRA-001/acceptance.md`
 - Automated test for Edge Case 2 (host port already in use) at `tests/integration/test_docker_stack.py::test_run_server_exits_2_when_port_in_use`
 
+### Fixed
+
+- **Model service never pulled the configured model** (regression from Phase 2b — `docker-compose.yml` had no model-pull step, and `MODEL` env var was not even forwarded to the `model` service). Stock `ollama/ollama:latest` only runs `ollama serve`; it does NOT auto-pull models on startup. Symptom: `/health` looped at `503 {"status":"loading"}` indefinitely because `OllamaAdapter.is_ready()` polled `/api/tags`, saw an empty model list, and never flipped `READY`. Repro: `./run_debug.sh` or `./run_server.sh` with default MODEL on a fresh `argus_ollama_models` volume. Fix:
+  - `_model_entrypoint.sh` (new file at project root) — small `sh` wrapper bind-mounted into the `model` container as `/usr/local/bin/_model_entrypoint.sh`. Starts `ollama serve` in the background, polls for daemon ready (60s timeout, configurable via `ARGUS_OLLAMA_BOOT_WAIT`), pulls `$MODEL` if not already cached in the volume, then hands control to `ollama serve`. Idempotent — re-runs skip the pull when the model is already present.
+  - `docker-compose.yml` — adds `MODEL: ${MODEL:-llama4:scout}` to the `model` service environment (was previously only on the `api` service), bind-mounts `_model_entrypoint.sh` read-only into the model container, and overrides the image's default entrypoint with the wrapper.
+  - `.dockerignore` — excludes `_model_entrypoint.sh` from the api image build context (it's only used by the model container at runtime).
+- **Unit and integration tests did not catch this** because unit tests mock the Ollama HTTP boundary (no real `/api/tags` call) and integration tests were never executed against a real Docker stack during the /moai run pipeline. Manual verification (Edge Case 1 procedure) would have caught it but was deferred to release-time.
+
 ### Changed
 
 - `run_debug.sh`:

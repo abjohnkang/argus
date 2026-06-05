@@ -27,6 +27,7 @@ tests/
 # Entry scripts and sourced helpers run on the host, not inside the container
 run_*.sh
 _docker_preflight.sh
+_model_entrypoint.sh
 
 # Local secrets / logs
 .env

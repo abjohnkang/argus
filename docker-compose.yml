@@ -20,8 +20,21 @@ services:
       # Ollama binds its own internal port inside the model container.
       # Not exposed to the host (no `ports:` key below).
       OLLAMA_HOST: 0.0.0.0:11434
+      # Model tag for the model-entrypoint wrapper to pull on first run.
+      # Defaults to llama4:scout per REQ-INFRA-004. Override at the host:
+      #   MODEL=llama3.2:1b ./run_server.sh   (~1.3 GB; fits 8 GB systems)
+      #   MODEL=llama3.2:3b ./run_server.sh   (~2.0 GB; recommended for laptops)
+      MODEL: ${MODEL:-llama4:scout}
     volumes:
       - argus_ollama_models:/root/.ollama
+      # Bind-mount the entrypoint wrapper that auto-pulls MODEL on first run.
+      # Without this wrapper the stock ollama/ollama image only runs
+      # `ollama serve` and never pulls models — /api/tags would stay empty,
+      # OllamaAdapter.is_ready() would never flip true, and /health would
+      # loop at 503 forever. See _model_entrypoint.sh at project root for
+      # the wrapper logic (idempotent: skips pull if model already cached).
+      - ./_model_entrypoint.sh:/usr/local/bin/_model_entrypoint.sh:ro
+    entrypoint: ["/usr/local/bin/_model_entrypoint.sh"]
     restart: unless-stopped
 
   api:
