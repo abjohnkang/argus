@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      SPEC-UI-001 REQ-UI-001 defense-in-depth: lock the document to its own
+      origin so no off-origin font, script, style, analytics, or telemetry
+      request can fire even if one were accidentally introduced. 'unsafe-inline'
+      style is required by Vite's injected styles / react-markdown; img data:
+      covers inlined SVG/PNG assets. No remote host is whitelisted anywhere.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <title>Argus</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
