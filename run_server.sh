@@ -68,6 +68,7 @@ LAST_PROGRESS=0
 while [ "${ELAPSED}" -lt "${TIMEOUT_SECONDS}" ]; do
   if curl -sf -o /dev/null "${HEALTH_URL}" 2>/dev/null; then
     echo "Stack ready. /health returned 200 after ${ELAPSED}s."
+    echo "Open the Argus chat UI at http://127.0.0.1:${API_PORT}/"
     exit 0
   fi
   if [ $((ELAPSED - LAST_PROGRESS)) -ge 30 ]; then

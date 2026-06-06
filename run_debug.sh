@@ -16,9 +16,9 @@
 #      idempotency contract of run_server.sh (REQ-INFRA-002 Scenario 5),
 #      because debug runs are short-lived and want clean container state.
 #   2. Background browser-launcher: once `/health` returns 200, opens the
-#      future-UI URL (http://127.0.0.1:${UI_PORT:-3000}/). The UI service
-#      is NOT in v1's docker-compose.yml — that URL won't respond until
-#      the follow-up React UI SPEC ships. Set NO_BROWSER=1 to skip.
+#      chat UI served by the api service itself at http://127.0.0.1:${API_PORT}/.
+#      SPEC-UI-001 serves the React SPA from the api origin via StaticFiles —
+#      there is no separate UI service or port. Set NO_BROWSER=1 to skip.
 #      Cross-platform: macOS `open`, Linux `xdg-open`, WSL `cmd.exe`.
 
 set -euo pipefail
@@ -34,7 +34,9 @@ source "$PROJECT_ROOT/_docker_preflight.sh"
 ensure_docker_ready
 
 API_PORT="${API_PORT:-8000}"
-UI_PORT="${UI_PORT:-3000}"
+# SPEC-UI-001: the chat UI is served by the api service itself (StaticFiles on
+# the api origin), so the UI lives on API_PORT — not a separate UI service/port.
+UI_PORT="${UI_PORT:-$API_PORT}"
 HEALTH_URL="http://127.0.0.1:${API_PORT}/health"
 UI_URL="http://127.0.0.1:${UI_PORT}/"
 
@@ -57,8 +59,7 @@ launch_browser_when_ready() {
   local elapsed=0
   while [ "${elapsed}" -lt "${timeout}" ]; do
     if curl -sf -o /dev/null "${HEALTH_URL}" 2>/dev/null; then
-      echo "[browser] API ready at ${HEALTH_URL}; opening ${UI_URL}"
-      echo "[browser] Note: UI service is deferred to a follow-up SPEC; URL may not yet respond."
+      echo "[browser] API ready at ${HEALTH_URL}; opening chat UI at ${UI_URL}"
       if command -v open >/dev/null 2>&1; then
         open "${UI_URL}" 2>/dev/null || true
       elif command -v xdg-open >/dev/null 2>&1; then
