@@ -29,9 +29,11 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -42,6 +44,24 @@ from api.security import extract_origin_host, is_localhost_header
 from api.state import ReadinessState, ReadinessTracker
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_web_dist() -> Path:
+    """Resolve the directory holding the built SPA bundle (``web/dist``).
+
+    Anchored, not CWD-relative: ``api/main.py`` lives at ``<root>/api/main.py``,
+    so ``<root>/web/dist`` is two parents up + ``web/dist``. This resolves to
+    ``/app/web/dist`` inside the container (WORKDIR ``/app``, bundle copied
+    there by api/Dockerfile) and ``<repo>/web/dist`` for local runs, regardless
+    of the process CWD. ``ARGUS_WEB_DIST`` overrides it (used by hermetic
+    tests to point at a temporary stub dist).
+    """
+    override = os.environ.get("ARGUS_WEB_DIST")
+    if override:
+        return Path(override)
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / "web" / "dist"
+
 
 # ---------------------------------------------------------------------------
 # Request models — inline per scope rules (no separate models.py module)
@@ -232,6 +252,35 @@ def create_app(*, start_poller: bool = True) -> FastAPI:
                 yield chunk
 
         return StreamingResponse(_streamed(), media_type="text/event-stream")
+
+    # ------------------------------------------------------------------
+    # SPA static serving (SPEC-UI-001)
+    # ------------------------------------------------------------------
+    # @MX:NOTE: This StaticFiles mount MUST stay registered AFTER the
+    # /health, /v1/models, and /v1/chat/completions routes above. Mount
+    # ordering is the invariant: Starlette matches routes top-down, so the
+    # API routes take precedence and the html=True catch-all only serves
+    # unmatched paths (the SPA shell + hashed assets). Serving the SPA from
+    # this same origin (127.0.0.1:8000) is exactly what keeps
+    # LocalhostOnlyMiddleware clean — the page and all its fetch() calls are
+    # same-origin, so no CORS config is needed. Do NOT reorder this above the
+    # API routes, and do NOT add CORS to "fix" a cross-origin setup.
+    # @MX:REASON: Reordering would shadow /health etc. with index.html
+    # (REQ-UI-002/003 break); adding CORS would weaken the REQ-INFRA-005
+    # localhost-only threat model that same-origin serving preserves.
+    web_dist = _resolve_web_dist()
+    if web_dist.is_dir():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="spa")
+        logger.info("serving SPA from %s", web_dist)
+    else:
+        # No built frontend present (hermetic tests, vite-less dev). The API
+        # must still start and serve /health etc. — StaticFiles would raise at
+        # construction if pointed at a missing directory, so skip the mount.
+        logger.warning(
+            "web/dist not found at %s — SPA serving disabled; API routes "
+            "still available. Run the frontend build to enable the UI.",
+            web_dist,
+        )
 
     return app
 

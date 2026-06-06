@@ -16,6 +16,14 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Frontend host artifacts (SPEC-UI-001). The web-build Dockerfile stage runs
+# `npm ci` and `npm run build` fresh INSIDE the image, so a stale host
+# node_modules/ or dist/ must NOT be copied into the build context. The
+# web/ source itself (web/src, web/package.json, web/package-lock.json) is
+# deliberately NOT excluded — the build stage needs it.
+web/node_modules/
+web/dist/
+
 # Coverage artifacts (host-side tooling)
 htmlcov/
 .coverage
