@@ -6,9 +6,10 @@ All inference, memory, and tools run locally on your hardware. No data ever leav
 
 ## Status
 
-**v1 (SPEC-INFRA-001) — Runtime foundation complete.**
-This release delivers a localhost-bound HTTP API in Docker serving Llama 4 Scout inference.
-The React web UI, agent tools, and memory are deferred to follow-up SPECs.
+**First milestone complete (SPEC-INFRA-001 + SPEC-UI-001).**
+A localhost-bound HTTP API in Docker serves Llama 4 Scout inference, and a React chat UI
+is available in the browser at `http://127.0.0.1:8000/`. Agent tools and memory are
+deferred to follow-up SPECs.
 
 ---
 
@@ -44,7 +45,11 @@ curl http://127.0.0.1:8000/health
 # {"status":"ready"} — model is loaded and serving
 ```
 
-Send a streaming chat request:
+Open `http://127.0.0.1:8000/` in a browser to use the chat UI. Type a message and press Enter
+to stream a response from the local model. The UI is a minimal demo slice: one conversation,
+no persistence — reloading the page starts a fresh empty conversation.
+
+To use the API directly:
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
@@ -111,7 +116,7 @@ python3.12 -m venv .venv
 ### Tests
 
 ```bash
-# Unit tests — hermetic, no Docker required (103 tests, 92.62% coverage)
+# Unit tests — hermetic, no Docker required (117 tests, 93% coverage)
 .venv/bin/pytest api/tests/ --cov=api -v
 
 # Integration tests — requires Docker + Ollama (~1 GB pull of llama3.2:1b on first run)
@@ -132,22 +137,24 @@ python3.12 -m venv .venv
 
 ```
 argus/
+├── web/                    # React SPA (React 18 + Vite 5 + TypeScript + Tailwind)
+│   └── src/lib/sseClient.ts  # SSE over fetch+ReadableStream; AbortController stop
 ├── api/                    # FastAPI service
-│   ├── main.py             # App factory, middleware, lifespan readiness poller
+│   ├── main.py             # App factory, middleware, StaticFiles mount, readiness poller
 │   ├── inference.py        # OllamaAdapter — @MX:ANCHOR runtime swap boundary
 │   ├── security.py         # LocalhostOnlyMiddleware (pure functions)
 │   ├── state.py            # ReadinessTracker (async-lock-protected state machine)
 │   ├── requirements.txt    # Pinned runtime deps
-│   ├── Dockerfile          # Python 3.12-slim API image
+│   ├── Dockerfile          # Multi-stage: node:20-slim builds web/dist; python:3.12-slim serves
 │   └── tests/              # Unit tests (hermetic, respx-mocked Ollama)
 ├── tests/integration/      # Integration tests (real Docker + Ollama)
-├── docker-compose.yml      # Two-service stack: model (Ollama) + api (FastAPI)
+├── docker-compose.yml      # Two-service stack: model (Ollama) + api (FastAPI + SPA)
 ├── run_server.sh           # Idempotent first-run + health-gated startup (project root)
-├── run_debug.sh            # Foreground variant with debug logging
+├── run_debug.sh            # Foreground variant with debug logging + browser-launch
 ├── .env.example            # MODEL, API_PORT, OLLAMA_HOST documented
 ├── pyproject.toml          # Python project config + test/lint tooling
 ├── CONCEPT.md              # Project vision and non-goals
-└── .moai/specs/            # SPEC documents (SPEC-INFRA-001 and future SPECs)
+└── .moai/specs/            # SPEC documents (SPEC-INFRA-001, SPEC-UI-001)
 ```
 
 ---

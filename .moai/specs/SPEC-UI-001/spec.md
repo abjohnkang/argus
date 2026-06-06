@@ -1,7 +1,7 @@
 ---
 id: SPEC-UI-001
 version: 0.1.0
-status: draft
+status: completed
 created: 2026-06-05
 created_at: 2026-06-05
 updated: 2026-06-05
@@ -279,3 +279,52 @@ The following MX tags will be placed during `/moai run`:
 | `web/src/lib/sseClient.ts` (abort/stop branch) | `@MX:WARN` | Stop-button race: `abort()` can land between reads; the catch MUST distinguish `signal.aborted` (silent finalise) from a real error (surface it). Requires `@MX:REASON`. |
 | `api/main.py` (StaticFiles mount) | `@MX:NOTE` | Documents that the SPA mount MUST be registered AFTER the API routes (mount ordering invariant) and that same-origin serving is what keeps `LocalhostOnlyMiddleware` clean — do not reorder, do not add CORS. |
 | `api/Dockerfile` (node build stage) | `@MX:NOTE` | Documents that Node appears in the build stage only and never in the runtime image, preserving the no-Node-at-runtime stance. |
+
+---
+
+## Implementation Notes
+
+This section is appended by `/moai sync SPEC-UI-001` after the Run phase completed.
+
+### Commits delivered (branch: feature/SPEC-INFRA-001-runtime-foundation)
+
+| SHA | Message |
+|---|---|
+| `dc8604d` | docs(spec): SPEC-UI-001 initial draft + plan-auditor PASS |
+| `bab0f75` | feat(ui): React SPA (web/ — React 18 + Vite 5 + TypeScript + Tailwind + SSE client) |
+| `0eea8dd` | feat(api): static SPA serving delta (StaticFiles mount + multi-stage Dockerfile) |
+| `17bfd2c` | fix(scripts): repoint run_debug.sh browser-launcher from port 3000 to API origin |
+
+### Files created
+
+- **`web/`** — new top-level React SPA directory. Approximately 20 source files: `package.json`, `tsconfig.json`, `vite.config.ts`, `tailwind.config.ts`, `postcss.config.js`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/index.css`, `src/lib/sseClient.ts`, `src/lib/health.ts`, `src/lib/useChat.ts`, plus components under `src/components/` (ChatView, MessageList, MessageBubble, Composer, StopButton, LoadingState, ModelBadge).
+- **`api/tests/test_static_spa.py`** — 14 new pytest tests covering the `StaticFiles` mount, API route precedence, and graceful absence of `web/dist`.
+
+### Test results
+
+| Suite | Count | Coverage |
+|---|---|---|
+| Frontend (Vitest) | 37 pass | lib branch coverage >85% |
+| Backend unit tests (pytest) | 117 pass (103 pre-existing + 14 new) | `api/` coverage 93% |
+
+Frontend tests are hermetic (no network, no Docker). Backend tests remain hermetic via respx; the new `test_static_spa.py` tests run without Docker.
+
+### MX tags placed
+
+| Tag | File | Purpose |
+|---|---|---|
+| `@MX:ANCHOR` + `@MX:REASON` | `web/src/lib/sseClient.ts` (SSE frame parser) | Ollama-native wire format boundary (`message.content`, `[DONE]` sentinel, in-band `{"error"}` frames); single-file edit point for any SSE shape change |
+| `@MX:WARN` + `@MX:REASON` | `web/src/lib/sseClient.ts` (chunk-boundary buffer) | TCP chunks do not align with SSE frame boundaries; residual-buffer carry-forward contract documented |
+| `@MX:WARN` + `@MX:REASON` | `web/src/lib/sseClient.ts` (abort branch) | Stop-button race: `abort()` can land between reads; MUST distinguish `signal.aborted` (silent finalise) from a real error |
+| `@MX:NOTE` | `api/main.py` (StaticFiles mount) | Mount MUST be registered AFTER API routes (ordering invariant); same-origin serving keeps `LocalhostOnlyMiddleware` clean — do not reorder, do not add CORS |
+| `@MX:NOTE` | `api/Dockerfile` (node build stage) | Node is build-time only; never present in the runtime image |
+
+### Quality verdicts
+
+- **plan-auditor**: PASS (score 0.93) — 5 Minor defects identified and resolved before run (D1–D5 in HISTORY).
+- **evaluator-active**: PASS — Functionality 93 / Security 96 / Craft 89 / Consistency 94.
+- **Live stack validation** (`MODEL=llama3.2:3b`, `run_debug.sh`): multi-stage image built cleanly (npm ci + vite build in Docker), SPA served at `http://127.0.0.1:8000/`, API route precedence verified (`/v1/models` returns JSON, not the SPA catch-all), forged `Host` header correctly rejected with 403, streaming chat confirmed end-to-end using Ollama-native `message.content` frame shape. First-milestone vertical slice — open browser, type, watch Llama stream — is COMPLETE.
+
+### Scope amendment
+
+**run script browser-launcher repoint (user-approved during run):** The original SPEC listed `run_debug.sh` and `run_server.sh` in Exclusions as untouched. Live testing revealed `run_debug.sh`'s auto-open browser-launcher still targeted port `3000` (the obsolete deferred-UI-service URL from SPEC-INFRA-001). Since SPEC-UI-001 serves the SPA from the api origin (`:8000`), `run_debug.sh`'s `UI_PORT` default was repointed from `3000` to `API_PORT` (`:8000`) and the deferred-UI comments removed. `run_server.sh` gained a one-line "chat UI available at ..." hint on ready. No behavioral change to the Docker stack itself — only the browser-launcher target and operator-facing messaging were updated.

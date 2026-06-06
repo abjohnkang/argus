@@ -67,13 +67,45 @@ Per SPEC-INFRA-001 Exclusions (not in scope, not to be implemented until corresp
 
 ---
 
-## First-Milestone Feature Scope (pre-SPEC-INFRA-001, preserved)
+## SPEC-UI-001 Delivery (Chat UI, v1)
 
-The first milestone is a working chat UI backed by local Llama 4 streaming inference. It is the smallest demo-worthy vertical slice: open a browser, type a message, see Llama 4 stream a response from the local container.
+SPEC-UI-001 delivers the browser-based React chat front end that completes the first-milestone vertical slice. The demo-able state is: open a browser at `http://127.0.0.1:8000`, type a message, and watch a local Llama model stream a response — all on-device.
+
+### What shipped
+
+- **Browser chat UI at `http://127.0.0.1:8000/`** — React 18 SPA built with Vite 5, served directly from the `api` service via `StaticFiles`. No new container, no nginx, no Node runtime in production.
+- **Token-by-token streaming** — `fetch()` + `ReadableStream` SSE client (`web/src/lib/sseClient.ts`) consumes the Ollama-native stream; markdown and fenced code blocks rendered via react-markdown + remark-gfm + rehype-highlight.
+- **Stop button** — aborts the in-flight stream via `AbortController`; partial output is retained and the composer resets without surfacing an error.
+- **Loading state** — polls `GET /health`; disables the composer while the model is still loading (`503`); enables input on `200 {"status":"ready"}`.
+- **Error handling** — pre-stream non-OK HTTP status and mid-stream `{"error"}` frames both surface human-readable messages; typed input is never discarded.
+- **Same-origin, no external calls** — SPA served from the api origin keeps `LocalhostOnlyMiddleware` clean; no CORS config added; `Content-Security-Policy: default-src 'self'` enforced; all fonts and highlight themes self-hosted.
+- **Single conversation, no persistence** — honors the project no-persistence rule; reloading the page starts a fresh empty conversation.
+
+### Demo state at end of SPEC-UI-001
+
+Open `http://127.0.0.1:8000/` in a browser after `./run_server.sh`. The first-milestone vertical slice — open browser, type, watch Llama stream — is complete.
+
+### What v1 explicitly does NOT ship
+
+Per SPEC-UI-001 Exclusions:
+
+- No conversation persistence or chat history (honors project no-persistence rule)
+- No multi-session or multiple conversations
+- No settings panel or model-picker dropdown
+- No authentication or access control (inherits SPEC-INFRA-001 localhost threat model)
+- No mobile-specific layout
+- No telemetry, analytics, or remote config
+- No agent tools
+
+---
+
+## First-Milestone Feature Scope
+
+The first milestone — a working chat UI backed by local Llama 4 streaming inference — is now COMPLETE. Both SPECs that compose the vertical slice have been delivered.
 
 **In scope for the full first milestone (across multiple SPECs):**
 
-- Chat UI (React, browser-based) — follow-up SPEC
+- Chat UI (React, browser-based) — **delivered in SPEC-UI-001**
 - Local Llama 4 inference via the Python backend — delivered in SPEC-INFRA-001
 - Streaming response output (token-by-token) — delivered in SPEC-INFRA-001
 - Docker Compose orchestration of all services — delivered in SPEC-INFRA-001
@@ -90,7 +122,7 @@ The first milestone is a working chat UI backed by local Llama 4 streaming infer
 - No multi-user support
 - No mobile interface
 
-Agent capabilities (tools, memory, scheduling) are planned for later milestones and are not in scope until the runtime foundation SPEC is complete.
+Agent capabilities (tools, memory, scheduling) are planned for later milestones.
 
 ---
 

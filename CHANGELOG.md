@@ -8,6 +8,31 @@ All notable changes to Argus are documented here. Format follows [Keep a Changel
 
 ### Added
 
+- **SPEC-UI-001: React chat UI** — browser-based streaming chat front end that completes the first-milestone vertical slice.
+- React 18 SPA (`web/`) built with Vite 5, TypeScript 5, and Tailwind CSS 3.4; served by the existing FastAPI `api` service at `http://127.0.0.1:8000/` via `StaticFiles` — no new container, no nginx, no Node runtime in production.
+- `web/src/lib/sseClient.ts` (`@MX:ANCHOR`) — SSE stream consumer over `fetch()` + `ReadableStream` with cross-chunk frame buffering, `[DONE]` sentinel detection, Ollama-native `message.content` extraction, in-band `{"error"}` frame handling, and `AbortController`-based stop.
+- `web/src/lib/health.ts` — `/health` readiness polling; disables the composer while the backend is `503 loading`.
+- Token-by-token streaming render with `react-markdown` + `remark-gfm` + `rehype-highlight`; all assets self-hosted (no CDN at runtime).
+- Stop button: aborts the in-flight stream via `AbortController`; retains partial output; resets composer without surfacing an error.
+- Loading state: indeterminate "model is loading" state while `/health` returns `503`; no timeout — first-run model pull can take minutes.
+- Error handling: pre-stream non-OK HTTP status (e.g. `502`) and mid-stream `{"error"}` SSE frames both surface human-readable messages; typed input is never discarded; UI stays usable for retry.
+- `Content-Security-Policy: default-src 'self'` meta tag in `index.html` — defense-in-depth for the no-external-call rule.
+- Neutral ChatGPT-like theme with semantic CSS-variable brand seam (`--color-bg`, `--color-surface`, `--color-accent`, etc.) — brand values deferred to a future brand interview.
+- 37 Vitest unit tests (`web/src/lib/`); lib branch coverage >85%.
+- `api/tests/test_static_spa.py` — 14 new pytest tests covering `StaticFiles` mount, API route precedence, and graceful absence of `web/dist`; backend total 117 tests, `api/` coverage 93%.
+
+### Changed (SPEC-UI-001)
+
+- `api/main.py` — mounts `StaticFiles(directory="web/dist", html=True)` at `/`, registered AFTER the API routes so API route precedence is preserved; mount is a no-op when `web/dist` is absent. `@MX:NOTE` documents the ordering invariant.
+- `api/Dockerfile` — converted to multi-stage: a `node:20-slim` build stage runs `npm ci && npm run build` against `web/`; the resulting `web/dist` is copied into the `python:3.12-slim` runtime stage via `COPY --from=web-build`. Node is present at build time only.
+- `.dockerignore` — added `web/node_modules/` and `web/dist/` exclusions so stale host artifacts are not copied into the build context.
+- `run_debug.sh` — browser-launcher `UI_PORT` default repointed from the obsolete port `3000` to `API_PORT` (`:8000`); obsolete "deferred UI service" comments removed.
+- `run_server.sh` — prints "Chat UI available at http://127.0.0.1:${API_PORT:-8000}/" on ready.
+
+---
+
+### Added (SPEC-INFRA-001)
+
 - **SPEC-INFRA-001: Llama 4 runtime foundation** — localhost-bound HTTP API in Docker serving Llama 4 Scout inference via Ollama.
 - FastAPI service (`api/`) with three OpenAI-compatible endpoints:
   - `GET /health` — loading/ready state machine (`503 {"status":"loading"}` → `200 {"status":"ready"}`)

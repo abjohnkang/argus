@@ -7,7 +7,7 @@
 | Layer | Language |
 |-------|----------|
 | Backend | Python 3.12 |
-| Frontend | TypeScript (via React) — planned, follow-up SPEC |
+| Frontend | TypeScript 5 (React 18) — delivered in SPEC-UI-001 |
 | Orchestration | Shell (entry scripts) |
 | Container config | YAML (Docker Compose) |
 
@@ -21,11 +21,65 @@
 
 ### Frontend: React (TypeScript)
 
-**Rationale (planned):** Locked in by the project's technology choices from the interview. React is the de facto standard for interactive chat UIs and has strong ecosystem support for streaming response rendering. TypeScript is used to keep the frontend type-safe as the project grows. Framework choice (bare Vite vs Next.js) is deferred to the UI SPEC.
+**Rationale:** Locked in by the project's technology choices from the interview. React 18 is the de facto standard for interactive chat UIs and has strong ecosystem support for streaming response rendering. TypeScript 5 keeps the frontend type-safe as the project grows. Vite 5 was chosen over Next.js because the UI is a static SPA with no server-side rendering needs — Vite produces a lean static bundle that the FastAPI `StaticFiles` mount serves directly, keeping the single-entry-point architecture intact.
 
 ### Orchestration: Docker + Docker Compose
 
 **Rationale:** The core constraint is that the host environment must stay untouched. Docker Compose is the simplest tool that satisfies this: one `docker-compose.yml` defines all services, and the user needs only Docker installed. All dependencies live inside containers.
+
+---
+
+## SPEC-UI-001 Stack (React Chat UI)
+
+### Frontend Runtime Dependencies
+
+| Package | Version constraint | Role |
+|---|---|---|
+| React | `^18.3` | UI library; `useReducer`-based chat state |
+| TypeScript | `^5` | Static typing for the SPA |
+| Vite | `^5` | Build tool (dev server with API proxy + static bundle for production) |
+| Tailwind CSS | `^3.4` | Utility-first styling; neutral ChatGPT-like theme backed by CSS-variable brand-seam tokens |
+| react-markdown | `^9` | Markdown rendering for assistant messages |
+| remark-gfm | `^4` | GitHub Flavored Markdown tables, strikethrough, task lists |
+| rehype-highlight | `^7` | Syntax highlighting for fenced code blocks; highlight.js theme self-hosted (no CDN) |
+
+### Frontend Test Stack
+
+| Package | Role |
+|---|---|
+| Vitest | Test runner (co-located with Vite; zero config overhead) |
+| @testing-library/react | React component testing (render + user-event) |
+
+37 tests; lib branch coverage >85%.
+
+### Key frontend decisions
+
+**`fetch()` + `ReadableStream` over `EventSource`:** The browser's native `EventSource` API is
+read-only GET — it cannot POST a JSON body. The SSE stream from `POST /v1/chat/completions` is
+consumed via `fetch()` with `response.body.getReader()`, a manual `TextDecoder` + `\n\n`-frame
+splitter, and `AbortController`-based abort for the Stop button. See `web/src/lib/sseClient.ts`
+`@MX:ANCHOR` for the frame-parsing contract.
+
+**Same-origin serving over a separate dev server:** The SPA is served from the api origin at
+runtime (`StaticFiles` in `api/main.py`). This means `Host` and `Origin` headers on every
+`fetch()` call are `127.0.0.1:8000`, which `LocalhostOnlyMiddleware` passes cleanly — no CORS
+headers needed, no weakening of the v1 threat model. In development, `vite dev` uses a proxy
+(`/v1` and `/health` → `http://127.0.0.1:8000`) to mirror the same-origin behavior.
+
+**Multi-stage Dockerfile:** `api/Dockerfile` added a `node:20-slim` first stage that runs
+`npm ci && npm run build` against `web/`; the output `web/dist/` is copied into the
+`python:3.12-slim` runtime stage. Node is never present at runtime, honoring the
+"host environment untouched" and "minimal runtime surface" stances. `.dockerignore` excludes
+`web/node_modules/` and `web/dist/` so host artifacts do not pollute the build context.
+
+**Neutral brand defaults with CSS-variable seam:** Tailwind tokens (`--color-bg`,
+`--color-surface`, `--color-accent`, `--color-text`, `--font-sans`, `--font-mono`) are defined
+as semantic CSS variables. The brand interview (`_TBD_` in `web/research.md`) can be applied
+later by editing variable values only — no component changes needed.
+
+**Content Security Policy:** `index.html` carries `<meta http-equiv="Content-Security-Policy"
+content="default-src 'self'">` as defense-in-depth for the no-external-call rule. Self-hosted
+fonts and highlight.js themes satisfy the `'self'` constraint.
 
 ---
 
@@ -127,13 +181,17 @@ Both scripts require only `docker` and `docker compose` in the host `PATH`.
 
 ---
 
-## Open Decisions (carry-forward from pre-SPEC-INFRA-001)
+## Open Decisions (carry-forward)
 
 The following decisions remain unresolved and are deferred to follow-up SPECs:
 
-1. **React framework wrapper** (bare Vite vs Next.js) — belongs to the UI SPEC
-2. **Streaming transport on the UI side** — backend uses SSE; UI SPEC decides how React consumes it
-3. **Smaller-model fallback UX** — how users opt into Llama 3.2 in a UI context
+1. **Smaller-model fallback UX** — how users opt into Llama 3.2 in a UI context (currently `MODEL=llama3.2:3b` env var only)
+2. **Brand adoption** — the `_TBD_` brand files in `web/research.md`; CSS-variable seam is in place but no brand values committed
+
+Decisions resolved by SPEC-UI-001 (no longer open):
+- React framework wrapper: bare Vite (no SSR needed; static bundle served by FastAPI `StaticFiles`)
+- Streaming transport on the UI side: `fetch()` + `ReadableStream` (EventSource cannot POST)
+- Serving strategy: same-origin from api origin (no separate web container, no nginx, no CORS)
 
 Decisions resolved by SPEC-INFRA-001 (no longer open):
 - Model runtime: Ollama (default)
